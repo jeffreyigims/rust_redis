@@ -1,10 +1,10 @@
 use std::net::TcpListener;
 use anyhow::Result;
 use clap::Parser;
-use std::net::SocketAddr;
-use std::net::TcpStream;
-use std::io::prelude::*;
 use std::net::IpAddr;
+
+mod connection;
+use connection::Connection;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -14,14 +14,11 @@ struct Args {
     port: u16,
 }
 
-fn handle_request(mut socket: TcpStream, _addr: SocketAddr) -> Result<()> {
-    let mut buf = [0; 64];
-    let n = socket.read(&mut buf)?;
+fn handle_request(mut connection: Connection) -> Result<()> {
+    let message = connection.read()?;
+    println!("Client said: {}", message);
 
-    // let request = std::str::from_utf8(&buf[..n])?;
-    if &buf[..n] == b"Hello" {
-        socket.write_all(b"World")?;
-    } 
+    connection.write("world!")?;
     Ok(())
 }
 fn main() -> Result<()> {
@@ -33,7 +30,7 @@ fn main() -> Result<()> {
     let listener = TcpListener::bind(&addr)?;
     loop {
         match listener.accept() {
-            Ok((socket, addr)) => handle_request(socket, addr),
+            Ok((socket, _addr)) => handle_request(Connection::from_stream(socket)),
             Err(e) => Err(e.into()),
         }?
 
