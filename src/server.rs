@@ -2,6 +2,7 @@ use std::net::TcpListener;
 use anyhow::Result;
 use clap::Parser;
 use std::net::IpAddr;
+use std::thread;
 
 mod connection;
 use connection::Connection;
@@ -30,9 +31,11 @@ fn main() -> Result<()> {
     let listener = TcpListener::bind(&addr)?;
     loop {
         match listener.accept() {
-            Ok((socket, _addr)) => handle_request(Connection::from_stream(socket)),
-            Err(e) => Err(e.into()),
-        }?
+            Ok((socket, _addr)) => {
+                thread::spawn(move || { handle_request(Connection::from_stream(socket)) });
+            },    
+            Err(e) => Err(anyhow::Error::from(e))?,
+        }
 
         // we don't need to close the socket connection since it's tied to the lifetime of `socket`
     }
