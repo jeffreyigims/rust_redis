@@ -10,6 +10,7 @@ pub struct Connection {
     pub want_to_read: bool,
     pub want_to_write: bool,
 
+    // TODO: implement efficient buffer management
     read_buffer: Vec<u8>,
     write_buffer: Vec<u8>,
 }
@@ -28,6 +29,7 @@ impl Connection {
 
        self.read_buffer.extend_from_slice(&buf[..bytes_read]);
 
+       // check if we have enough for the header 
        if self.read_buffer.len() < HEADER_SIZE {
            return Ok(None);
        }
@@ -35,6 +37,7 @@ impl Connection {
        let message_len = u32::from_le_bytes(self.read_buffer[..HEADER_SIZE].try_into()?);
         println!("Attempting to read {:?} bytes...", message_len);
 
+        // check if we have enough for the full request 
         let total_len = HEADER_SIZE + message_len as usize;
         if self.read_buffer.len() < total_len {
             return Ok(None);

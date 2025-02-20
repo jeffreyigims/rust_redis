@@ -101,6 +101,11 @@ fn start_server(port: Option<u16>, run: Arc<AtomicBool>, tx: mpsc::Sender<String
                 {
                     Some(message) => {
                         handle_request(conn, &message)?;
+                        /* 
+                          TODO: We can potentially optimize here and handle_write to avoid an extra syscall before
+                          reposning to the client. If we're doing request-response, we can assume the client 
+                          is ready for a response, but if we're not, we'd have to check the client is ready first
+                        */
                     },
                     None => {},
                 }
