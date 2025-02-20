@@ -79,8 +79,10 @@ impl Connection {
     }
     pub fn query(&mut self, query: &str) -> Result<String> {
         let len: u32 = query.len().try_into()?;
-        self.stream.write(&len.to_le_bytes())?;
-        self.stream.write(query.as_bytes())?;
+        let mut buffer = Vec::with_capacity(4 + query.len());
+        buffer.extend_from_slice(&len.to_le_bytes());
+        buffer.extend_from_slice(query.as_bytes());
+        self.stream.write_all(&buffer)?;
         self.stream.flush()?;
         self.read()
     }

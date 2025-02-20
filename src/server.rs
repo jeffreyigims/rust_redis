@@ -6,6 +6,8 @@ use std::os::fd::{AsRawFd, RawFd};
 use libc::{poll, pollfd, POLLIN, POLLERR, POLLOUT};
 use std::io;
 use std::collections::HashMap;
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::mpsc;
 
 mod connection;
 use connection::Connection;
@@ -23,19 +25,20 @@ fn handle_request(connection: &mut Connection, message: &str) -> Result<()> {
     connection.write(message)?;
     Ok(())
 }
-fn main() -> Result<()> {
-    let args = Args::parse();
+fn start_server(port: Option<u16>, run: Arc<AtomicBool>, tx: mpsc::Sender<String>) -> Result<()> {
     // define the address and port the server will listen on
-    let addr: (IpAddr, u16) = ([127, 0, 0, 1].into(), args.port);
+    let addr: (IpAddr, u16) = ([127, 0, 0, 1].into(), port.unwrap_or(0));
 
     // create a socket, bind to localhost:PORT, and listen on it 
     let listener = TcpListener::bind(&addr)?;
+    let port = listener.local_addr()?.port();
+    tx.send(port.to_string())?;
     listener.set_nonblocking(true)?;
     let fd: RawFd = listener.as_raw_fd();
 
 
     let mut connections: HashMap<RawFd, Connection> = HashMap::new();
-    loop {
+    while run.load(Ordering::SeqCst) {
         let mut fds: Vec<pollfd> = Vec::new();
         fds.push(pollfd {
             fd,
@@ -106,6 +109,117 @@ fn main() -> Result<()> {
                 connections.get_mut(&fd.fd).unwrap().handle_write()?;
             }
         }   
+    }
+
+    // we don't need to close the socket connection since it's tied to the lifetime of `socket`
+    Ok(())
+}
+
+fn main() -> Result<()> {
+    let args = Args::parse();
+    let (tx, _rx) = mpsc::channel();
+    start_server(Some(args.port), Arc::new(AtomicBool::new(true)), tx)
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use std::net::TcpStream;
+    use std::thread;
+    use std::io::{Read, Write};
+    use std::time::Duration;
+
+    // helper function to start the server in a separate thread
+    fn start_test_server(sever_running: Arc<AtomicBool>, tx: mpsc::Sender<String>) -> thread::JoinHandle<()> {
+        thread::spawn(move || {
+            start_server(None, sever_running, tx).unwrap();
+        })
+    }
+
+    fn setup() -> (Arc<AtomicBool>, u16) {
+        let sever_running =  Arc::new(AtomicBool::new(true));
+        let (tx, rx) = mpsc::channel();
+        let _server_thread = start_test_server(Arc::clone(&sever_running), tx);
+        // give the server some time to start
+        thread::sleep(Duration::from_millis(100));
+        let port = rx.recv().unwrap().parse().unwrap();
+        println!("Server started on port {}", port);
+        (sever_running, port)
+    }
+
+    fn teardown(server_running: Arc<AtomicBool>) {
+        server_running.store(false, Ordering::SeqCst);
+        // give the server some time to stop
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    #[test]
+    fn test_server_single_client() {
+        let (server_running, port) = setup();
+
+        let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port)).unwrap();
+        let message = b"\x05\x00\x00\x00hello";
+        stream.write_all(message).unwrap();
+
+        let mut response = [0; 9];
+        stream.read_exact(&mut response).unwrap();
+        assert_eq!(&response, b"\x05\x00\x00\x00hello");
+
+        teardown(server_running);
+    }
+
+    #[test]
+    fn test_server_single_client_multi_write() {
+        let (server_running, port) = setup();
+
+        let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port)).unwrap();
+        let message = b"\x05\x00\x00";
+        stream.write_all(message).unwrap();
+        stream.flush().unwrap();
+
+        let message = b"\x00";
+        stream.write_all(message).unwrap();
+        stream.flush().unwrap();
+
+        let message = b"hel";
+        stream.write_all(message).unwrap();
+        stream.flush().unwrap();
+
+        let message = b"lo";
+        stream.write_all(message).unwrap();
+        stream.flush().unwrap();
+
+        let mut response = [0; 9];
+        stream.read_exact(&mut response).unwrap();
+        assert_eq!(&response, b"\x05\x00\x00\x00hello");
+
+        teardown(server_running);
+    }
+
+    #[test]
+    fn test_server_multiple_clients() {
+        let (server_running, port) = setup();
+
+        let mut stream1 = TcpStream::connect(format!("127.0.0.1:{}", port)).unwrap();
+                let message = b"\x05\x00\x00\x00";
+        stream1.write_all(message).unwrap();
+
+        let mut stream2 = TcpStream::connect(format!("127.0.0.1:{}", port)).unwrap();
+        let message = b"\x05\x00\x00\x00hello";
+        stream2.write_all(message).unwrap();
+
+        let message = b"hello";
+        stream1.write_all(message).unwrap();
+
+        let mut response = [0; 9];
+        stream2.read_exact(&mut response).unwrap();
+        assert_eq!(&response, b"\x05\x00\x00\x00hello");
+
+        let mut response = [0; 9];
+        stream1.read_exact(&mut response).unwrap();
+        assert_eq!(&response, b"\x05\x00\x00\x00hello");
+
+        teardown(server_running);
     }
 
     // we don't need to close the socket connection since it's tied to the lifetime of `socket`
