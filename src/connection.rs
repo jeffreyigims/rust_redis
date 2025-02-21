@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::io::prelude::*;
 use std::net::{TcpStream, ToSocketAddrs};
 
-const HEADER_SIZE: usize = 4;
+pub const HEADER_SIZE: usize = 4;
 
 pub struct Connection {
     stream: TcpStream,
@@ -40,6 +40,7 @@ impl Connection {
     pub fn read(&mut self) -> Result<()> {
         let mut buf = [0; 32 * 1024];
         let result = self.stream.read(&mut buf);
+        println!("Read {:?} bytes...", result);
         if let Err(ref e) = result {
             // retryable error
             if e.kind() == std::io::ErrorKind::WouldBlock {
@@ -60,7 +61,6 @@ impl Connection {
         }
 
         let message_len = u32::from_le_bytes(self.read_buffer[..HEADER_SIZE].try_into()?);
-        println!("Attempting to read {:?} bytes...", message_len);
 
         // check if we have enough for the full request
         let total_len = HEADER_SIZE + message_len as usize;

@@ -102,10 +102,11 @@ fn start_server(port: Option<u16>, run: Arc<AtomicBool>, tx: mpsc::Sender<String
                 while let Some(message) = conn.handle_read()? {
                     handle_request(conn, &message)?;
                     /*
-                        TODO: We can potentially optimize here and handle_write to avoid an extra syscall before
+                        We can potentially optimize here and handle_write to avoid an extra syscall before
                         reposning to the client. If we're doing request-response, we can assume the client
                         is ready for a response, but if we're not, we'd have to check the client is ready first
                     */
+                    conn.handle_write()?;
                 }
             }
             if fd.revents & POLLOUT != 0 {
@@ -127,6 +128,7 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
+    use connection::HEADER_SIZE;
     use std::io::{Read, Write};
     use std::net::TcpStream;
     use std::thread;
@@ -232,6 +234,42 @@ mod integration_tests {
     fn test_pipelined_requests() {
         let (server_running, port) = setup();
         let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port)).unwrap();
+        stream.write_all(b"\x05\x00\x00\x00hello").unwrap();
+        stream.write_all(b"\x05\x00\x00\x00world").unwrap();
+        stream.write_all(b"\x01\x00\x00\x00!").unwrap();
+
+        let mut response = [0; 23];
+        stream.read_exact(&mut response).unwrap();
+        assert_eq!(
+            &response,
+            b"\x05\x00\x00\x00hello\x05\x00\x00\x00world\x01\x00\x00\x00!"
+        );
+
+        teardown(server_running);
+    }
+
+    #[test]
+    fn test_long_message() {
+        let (server_running, port) = setup();
+        let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port)).unwrap();
+
+        stream.write_all(b"\x05\x00\x00\x00hello").unwrap();
+
+        // sysctl net.inet.tcp.recvspace says 128KiB on my system, try 1MiB
+        // found this to actually be 32KiB in practice
+        const MIB: u32 = 1024 * 1024;
+        let buf = [1; MIB as usize];
+        stream.write_all(&MIB.to_le_bytes()).unwrap();
+        stream.write_all(&buf).unwrap();
+
+        let mut response = [0; 9];
+        stream.read_exact(&mut response).unwrap();
+        assert_eq!(&response, b"\x05\x00\x00\x00hello");
+
+        let mut response = [0; 4 + MIB as usize];
+        stream.read_exact(&mut response).unwrap();
+        assert_eq!(&response[..HEADER_SIZE], &MIB.to_le_bytes());
+        assert_eq!(&response[HEADER_SIZE..], &buf);
 
         teardown(server_running);
     }
