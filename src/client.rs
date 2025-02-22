@@ -19,7 +19,17 @@ fn main() -> Result<()> {
     let addr: (IpAddr, u16) = ([127, 0, 0, 1].into(), args.port);
 
     let mut stream: Connection = Connection::new(addr)?;
-    let response = stream.query("hello")?;
+
+    stream.set(b"hello", b"world")?;
+    let response = stream.read_blocking()?;
+    println!("Server said: {}", response);
+
+    stream.get(b"hello")?;
+    let response = stream.read_blocking()?;
+    println!("Server said: {}", response);
+
+    stream.delete(b"hello")?;
+    let response = stream.read_blocking()?;
     println!("Server said: {}", response);
 
     Ok(())
