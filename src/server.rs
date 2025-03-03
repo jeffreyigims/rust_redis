@@ -81,27 +81,21 @@ impl Server {
             });
 
             for (&fd, conn) in connections.iter() {
-                fds.push(pollfd {
+                let mut fd = pollfd {
                     fd,
                     events: POLLERR,
                     revents: 0,
-                });
+                };
 
                 if conn.want_to_read {
-                    fds.push(pollfd {
-                        fd,
-                        events: POLLIN,
-                        revents: 0,
-                    });
+                    fd.events |= POLLIN;
                 }
 
                 if conn.want_to_write {
-                    fds.push(pollfd {
-                        fd,
-                        events: POLLOUT,
-                        revents: 0,
-                    });
+                    fd.events |= POLLOUT;
                 }
+
+                fds.push(fd);
             }
 
             // this should be the only non-blocking call
@@ -123,13 +117,17 @@ impl Server {
             }
 
             for fd in &fds[1..] {
+                print!("File descriptor {} is ready: ", fd.fd);
                 if fd.revents & POLLERR != 0 || connections.get(&fd.fd).unwrap().want_close {
-                    println!("Error on file descriptor: {}", fd.fd);
+                    println!("Closing file descriptor: {}", fd.fd);
                     // socket will be closed when it goes out of scope
-                    connections.remove(&fd.fd);
+                    let conn = connections.remove(&fd.fd).unwrap();
+                    println!("Connection closed: {:#?}", conn);
+                    continue;
                 }
                 if fd.revents & POLLIN != 0 {
                     let conn = connections.get_mut(&fd.fd).unwrap();
+                    assert!(conn.want_to_read);
                     conn.read()?;
                     while let Some(oper) = conn.handle_read()? {
                         self.handle_request(conn, oper)?;
@@ -142,7 +140,9 @@ impl Server {
                     }
                 }
                 if fd.revents & POLLOUT != 0 {
-                    connections.get_mut(&fd.fd).unwrap().handle_write()?;
+                    let conn = connections.get_mut(&fd.fd).unwrap();
+                    assert!(conn.want_to_write);
+                    conn.handle_write()?;
                 }
             }
         }
@@ -171,10 +171,7 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use connection::HEADER_SIZE;
-    use core::str;
     use std::io::{Read, Write};
-    use std::net::TcpStream;
     use std::thread;
     use std::time::Duration;
 
@@ -236,6 +233,8 @@ mod integration_tests {
         let mut stream2 = Connection::from_port(port)?;
 
         stream1.set(b"hello", b"world")?;
+        let response = stream1.read_blocking()?;
+        assert_eq!(&response, "");
         stream2.get(b"hello")?;
         let response = stream2.read_blocking()?;
         assert_eq!(&response, "world");

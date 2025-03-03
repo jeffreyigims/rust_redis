@@ -15,6 +15,7 @@ pub enum Operation {
     Set { key: String, value: String },
 }
 
+#[derive(Debug)]
 pub struct Connection {
     pub stream: TcpStream, // jjigims23
 
@@ -57,6 +58,7 @@ impl Connection {
     }
 
     pub fn read(&mut self) -> Result<()> {
+        println!("Read...");
         let mut buf = [0; 32 * 1024];
         let result = self.stream.read(&mut buf);
         println!("Read {:?} bytes...", result);
@@ -165,7 +167,7 @@ impl Connection {
         self.stream.read_exact(&mut response[bytes_read..])?;
 
         let len = u32::from_le_bytes(response);
-        println!("Attempting to read {:?} bytes...", len);
+        // println!("Attempting to read {:?} bytes...", len);
 
         let mut buffer = vec![0; len as usize];
         self.stream.read_exact(&mut buffer[bytes_read..])?;
@@ -187,31 +189,25 @@ impl Connection {
     }
 
     pub fn get(&mut self, key: &[u8]) -> Result<()> {
-        let mut buffer = Vec::new();
-        buffer.push(0x01);
-        buffer.extend_from_slice(&(key.len() as u32).to_le_bytes());
-        buffer.extend_from_slice(key);
-        self.stream.write_all(&buffer)?;
+        self.stream.write_all(&[0x01])?;
+        self.stream.write_all(&(key.len() as u32).to_le_bytes())?;
+        self.stream.write_all(key)?;
         self.stream.flush().map_err(Into::into)
     }
 
     pub fn set(&mut self, key: &[u8], val: &[u8]) -> Result<()> {
-        let mut buffer = Vec::new();
-        buffer.push(0x03);
-        buffer.extend_from_slice(&(key.len() as u32).to_le_bytes());
-        buffer.extend_from_slice(key);
-        buffer.extend_from_slice(&(val.len() as u32).to_le_bytes());
-        buffer.extend_from_slice(val);
-        self.stream.write_all(&buffer)?;
+        self.stream.write_all(&[0x03])?;
+        self.stream.write_all(&(key.len() as u32).to_le_bytes())?;
+        self.stream.write_all(key)?;
+        self.stream.write_all(&(val.len() as u32).to_le_bytes())?;
+        self.stream.write_all(val)?;
         self.stream.flush().map_err(Into::into)
     }
 
     pub fn delete(&mut self, key: &[u8]) -> Result<()> {
-        let mut buffer = Vec::new();
-        buffer.push(0x02);
-        buffer.extend_from_slice(&(key.len() as u32).to_le_bytes());
-        buffer.extend_from_slice(key);
-        self.stream.write_all(&buffer)?;
+        self.stream.write_all(&[0x02])?;
+        self.stream.write_all(&(key.len() as u32).to_le_bytes())?;
+        self.stream.write_all(key)?;
         self.stream.flush().map_err(Into::into)
     }
 }
