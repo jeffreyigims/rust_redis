@@ -39,6 +39,8 @@ fn main() -> Result<()> {
     // define the address and port the server will listen on
     let addr: (IpAddr, u16) = ([127, 0, 0, 1].into(), args.port);
 
+    let benchmark_start = Instant::now();
+
     let mut handles: Vec<JoinHandle<Result<Vec<u128>>>> = vec![];
     for _ in 0..args.clients {
         let addr = addr.clone();
@@ -96,6 +98,13 @@ fn main() -> Result<()> {
     println!(
         "Min: {:.2}, Max: {:.2}, Average: {:.2}, P50: {:.2}, P95: {:.2}, P99: {:.2}",
         min, max, avg, p50, p95, p99
+    );
+
+    let total_elasped = benchmark_start.elapsed().as_micros();
+
+    println!(
+        "OPs/S: {:.2}",
+        all_latencies.len() as f64 / total_elasped as f64 * 1_000_000.0
     );
 
     // stream.set(b"hello", b"world")?;
