@@ -2,11 +2,54 @@
 
 The goal of the project is to build a key-value storage service that's written in rust and included minimal external dependencies. I.e. I implement my own version of an asynchronous input/output using a non-blocking custom-build event loop that only depends on `libc` and `std::net`.
 
+## Running the Project
+
+### Running
+
+Running the server and/or client:
+
+```
+cargo run --bin server 
+
+cargo run --bin client 
+```
+
+Note: add `--release` to compile with optimizations for performance tests 
+
+Also note the client is mostly used for performance testing right now. 
+
+### Testing
+
+To run all unit tests in the project:
+
+```
+cargo test 
+```
+
+### Debugging
+
+To debug with `gdb` or `lldb` (on macOS):
+
+`rust-gdb` and `rust-lldb` are wrappers over `gdb` and `lldb` that come with the rust installation and can pretty-print rust data types. 
+
+```
+cargo build --bin server
+rust-{gdb, lldb} ./target/release/server 
+```
+
+### Performance Tests
+
+The client can be used for testing `latency` (in microseconds) and `throughput` of the server. It calulates `p50`, `p95`, and `p99` percentiles as well as `min`, `max`, and `avg` request latencies.  
+
+The client spawns multiple threads to issue requests to the server, where each request is a sequence of `SET k v`, `GET k`, `DELETE k`, where `k` and `v` are randomly generated hex of size specified by `--key-length`. The number of clients and requests are also configurables by `--clients` and `--requests` respectively. 
+
+## Guide
+
 The goal of this guide is to document the steps that built up to the final server. `TODO expand on this`
 
 The following sections outline some key aspects of the server implementation.
 
-## Networking
+### Networking
 
 The server is a process that we can spawn to serve requests on some paramtarized port on our localhost. The server supports TCP-based connections and we use the `net::TcpListener` standard module as our networking interface. I'm pretty sure this is just a slim wrapper over `libc`.
 
@@ -25,7 +68,7 @@ pub fn start(&mut self) -> Result<()> {
     ...
 ```
 
-## The Protocol 
+### The Protocol 
 
 We use a request-repspone simple binary-based protocol that uses length prefixes. There are pros and cons to using test vs. binary and prefixes vs. delimiters which we'll not go into here. 
 
@@ -48,7 +91,7 @@ pub enum Operation {
 }
 ```
 
-## Concurrent Programming Model 
+### Concurrent Programming Model 
 
 There's a couple approaches to handle concurrent IO. The most common approaches are using multi-process/multi-threading or using an event-based model. For IO heavy workloads, the latter usually wins out in terms of scalability. This is because the former requires processsing each incoming request in a separate thread (in the multi-threading approach). This can lead to both memory concerns (since each thread requires a separate stack) and performance constraints, due to costly context switches and shared resource contention, espcially if we need to scale to thousands of connections. We implement the latter. 
 
@@ -158,7 +201,7 @@ The read path `TOOD`
 
 The write path `TODO`
 
-## Pipelined Requests
+### Pipelined Requests
 
 Pipelined requests are requests that are sent by a client sequentially without waiting for responses from proceeding requests. I.e. a client may send multiple requests sequentially and some time later read their reponses, expecting the same ordering of responses that was used in the requests. Pipelining can reduce IO operations, which can improve overall throughput and reduces client-side latency, since multple requests can be processed in a single round trip to the server.    
 
@@ -181,16 +224,29 @@ if fd.revents & POLLIN != 0 {
 ...
 ```
 
-## Benchmarks 
+### Benchmarks 
 
-`TODO`
+Running on my M1 Macbook Pro with 10 cores, I top out around 35k OPs/S. Run with 30 threads submitting 50 requests each with a key length of 4 bytes:
 
-## Future Optimizations and Next Steps 
+```
+cargo run --bin client --release -- --clients 30 --requests 50
+
+Finished `release` profile [optimized] target(s) in 0.25s
+     Running `target/release/client --clients 30 --requests 50`
+Min: 213.00, Max: 3031.00, Average: 836.87, P50: 717.00, P95: 1334.15, P99: 2933.00
+OPs/S: 34474.83
+```
+
+Latency is in microseconds.
+
+### Future Optimizations and Next Steps 
 
 A couple optimizations I can think of which aren't implemented yet:
 * I suspect we spend a lot of cycles decoding the binary keys and values to ensure they're valid UTF-8 before converting and storing them as `String`s. We can probably just store them as `bytes` directly. Our server doesn't care what their UTF-8 interpretation is
 * We process requests on the same thread we use to accept new connections. We can decouple this and have one thread responsible for accepting new connections and a pool of worker threads for processing requests. Note this would require careful synchronization of our key-value store across threads 
-* We can add better buffer managment in our `Connection` struct. `TODO`
+* We can add better buffer managment in our `Connection` struct. We currently `append` data back to the back and `remove` from the front. The former operation is pretty efficient with `vec` since the structure reallocates exponentially to amortize allocation costs. The latter operation is not since we need to potentially "shift" all requests to the front when we remove one. We can probably think of a more clever data structure where both operations are efficient. 
+
+Feel free to suggest more!
 
 I'll probably try and follow-up by implementing the actual key-value store from scratch as well, as described in the advanced topics section of the [original guide](https://build-your-own.org/redis/#table-of-contents).
 
