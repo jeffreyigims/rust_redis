@@ -15,12 +15,13 @@ use std::sync::{
 mod connection;
 use connection::Connection;
 use connection::Operation;
+use connection::OperationBytes;
 
 pub struct Server {
     port: u16,
     run: Arc<AtomicBool>,
     tx: mpsc::Sender<String>,
-    store: HashMap<String, String>,
+    store: HashMap<Vec<u8>, Vec<u8>>,
 }
 
 impl Server {
@@ -38,22 +39,22 @@ impl Server {
         })
     }
 
-    fn handle_request(&mut self, connection: &mut Connection, oper: Operation) -> Result<()> {
-        println!("Client said: {:#?}", oper);
+    fn handle_request(&mut self, connection: &mut Connection, oper: OperationBytes) -> Result<()> {
+        // println!("Client said: {:#?}", oper);
 
         match oper {
-            Operation::Get { key } => {
+            OperationBytes::Get { key } => {
                 if let Some(value) = self.store.get(&key) {
                     connection.write(value)
                 } else {
-                    connection.write("")
+                    connection.write(b"")
                 }
             }
-            Operation::Delete { key } => {
+            OperationBytes::Delete { key } => {
                 let v = self.store.remove(&key).unwrap_or("".into());
                 connection.write(&v)
             }
-            Operation::Set { key, value } => {
+            OperationBytes::Set { key, value } => {
                 let v = self.store.insert(key, value).unwrap_or("".into());
                 connection.write(&v)
             }
@@ -101,12 +102,12 @@ impl Server {
             // this should be the only non-blocking call
             let result = unsafe { poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) };
             if result == -1 {
-                eprintln!("poll call failed: {}", io::Error::last_os_error());
+                // println!("poll call failed: {}", io::Error::last_os_error());
                 return Err(anyhow::Error::from(io::Error::last_os_error()));
             }
 
             if fds[0].revents & POLLIN != 0 {
-                println!("TcpListener is ready to accept a connection.");
+                // println!("TcpListener is ready to accept a connection.");
                 match listener.accept() {
                     Ok((socket, _addr)) => {
                         let fd = socket.as_raw_fd();
@@ -117,12 +118,12 @@ impl Server {
             }
 
             for fd in &fds[1..] {
-                print!("File descriptor {} is ready: ", fd.fd);
+                // print!("File descriptor {} is ready: ", fd.fd);
                 if fd.revents & POLLERR != 0 || connections.get(&fd.fd).unwrap().want_close {
-                    println!("Closing file descriptor: {}", fd.fd);
+                    // println!("Closing file descriptor: {}", fd.fd);
                     // socket will be closed when it goes out of scope
                     let conn = connections.remove(&fd.fd).unwrap();
-                    println!("Connection closed: {:#?}", conn);
+                    // println!("Connection closed: {:#?}", conn);
                     continue;
                 }
                 if fd.revents & POLLIN != 0 {
@@ -193,7 +194,7 @@ mod integration_tests {
         // give the server some time to start
         thread::sleep(Duration::from_millis(100));
         let port = rx.recv().unwrap().parse().unwrap();
-        println!("Server started on port {}", port);
+        // println!("Server started on port {}", port);
         (sever_running, port)
     }
 
