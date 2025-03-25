@@ -17,8 +17,9 @@ pub enum Operation {
 pub struct Connection {
     pub stream: TcpStream,
 
-    pub want_to_read: bool,
+    // just tracks if there's data in our write_buffer
     pub want_to_write: bool,
+    // client sent 0 bytes
     pub want_close: bool,
 
     // TODO: implement more efficient buffer management
@@ -31,7 +32,6 @@ impl Connection {
         let stream = TcpStream::connect(address)?;
         Ok(Connection {
             stream,
-            want_to_read: true,
             want_to_write: false,
             want_close: false,
             read_buffer: Vec::new(),
@@ -47,7 +47,6 @@ impl Connection {
     pub fn from_stream(stream: TcpStream) -> Self {
         Connection {
             stream,
-            want_to_read: true,
             want_to_write: false,
             want_close: false,
             read_buffer: Vec::new(),
@@ -127,7 +126,6 @@ impl Connection {
     }
 
     pub fn write(&mut self, message: &[u8]) -> Result<()> {
-        self.want_to_read = false;
         let len: u32 = message.len().try_into()?;
         self.write_buffer.extend_from_slice(&len.to_le_bytes());
         self.write_buffer.extend_from_slice(message);
@@ -148,20 +146,18 @@ impl Connection {
         self.write_buffer.drain(..bytes_written);
         if self.write_buffer.is_empty() {
             self.want_to_write = false;
-            self.want_to_read = true;
         }
         Ok(())
     }
 
     pub fn read_blocking(&mut self) -> Result<String> {
         let mut response = [0; HEADER_SIZE];
-        let mut bytes_read = 0;
-        self.stream.read_exact(&mut response[bytes_read..])?;
+        self.stream.read_exact(&mut response)?;
 
         let len = u32::from_le_bytes(response);
 
         let mut buffer = vec![0; len as usize];
-        self.stream.read_exact(&mut buffer[bytes_read..])?;
+        self.stream.read_exact(&mut buffer)?;
         String::from_utf8(buffer).map_err(Into::into)
     }
 

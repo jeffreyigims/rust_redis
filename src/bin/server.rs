@@ -80,13 +80,9 @@ impl Server {
             for (&fd, conn) in connections.iter() {
                 let mut fd = pollfd {
                     fd,
-                    events: POLLERR,
+                    events: POLLERR | POLLIN,
                     revents: 0,
                 };
-
-                if conn.want_to_read {
-                    fd.events |= POLLIN;
-                }
 
                 if conn.want_to_write {
                     fd.events |= POLLOUT;
@@ -123,17 +119,16 @@ impl Server {
                 }
                 if fd.revents & POLLIN != 0 {
                     let conn = connections.get_mut(&fd.fd).unwrap();
-                    assert!(conn.want_to_read);
                     conn.read()?;
                     while let Some(oper) = conn.handle_read()? {
                         self.handle_request(conn, oper)?;
-                        /*
-                            We can optimize here and handle_write before the next loop iteration to potentially avoid an
-                            extra syscall before responding to the client. That is, if the client is ready to recieve a
-                            response and not still sending pipelined requests.
-                        */
-                        conn.handle_write()?;
                     }
+                    /*
+                        We can optimize here and handle_write before the next loop iteration to potentially avoid an
+                        extra syscall before responding to the client. That is, if the client is ready to recieve a
+                        response and not still sending pipelined requests.
+                    */
+                    conn.handle_write()?;
                 }
                 if fd.revents & POLLOUT != 0 {
                     let conn = connections.get_mut(&fd.fd).unwrap();
