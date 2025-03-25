@@ -125,7 +125,7 @@ impl Server {
                     }
                     /*
                         We can optimize here and handle_write before the next loop iteration to potentially avoid an
-                        extra syscall before responding to the client. That is, if the client is ready to recieve a
+                        extra syscall before responding to the client. That is, if the client is ready to receive a
                         response and not still sending pipelined requests.
                     */
                     conn.handle_write()?;
