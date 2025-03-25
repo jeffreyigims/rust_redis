@@ -39,19 +39,21 @@ rust-{gdb, lldb} ./target/release/server
 
 ### Performance Tests
 
-The client can be used for testing `latency` (in microseconds) and `throughput` of the server. It calulates `p50`, `p95`, and `p99` percentiles as well as `min`, `max`, and `avg` request latencies.  
+The client can be used for testing `latency` (in microseconds) and `throughput` of the server. It calculates `p50`, `p95`, and `p99` percentiles as well as `min`, `max`, and `avg` request latencies.  
 
 The client spawns multiple threads to issue requests to the server, where each request is a sequence of `SET k v`, `GET k`, `DELETE k`, where `k` and `v` are randomly generated hex of size specified by `--key-length`. The number of clients and requests are also configurables by `--clients` and `--requests` respectively. 
 
 ## Guide
 
-The goal of this guide is to exlain and highlight some key design decisions. The following sections outline some key aspects of the server implementation.
+The goal of this guide is to explain and highlight some key design decisions. The following sections outline some key aspects of the server implementation.
+
+See the full codebase at https://github.com/jeffreyigims/rust_redis. The full guide can also be found in the `README`.
 
 ### Networking
 
-The server is a process that we can spawn to serve requests on some paramtarized port on our localhost. The server supports TCP-based connections and we use the `net::TcpListener` standard module as our networking interface. I'm pretty sure this is just a slim wrapper over `libc`.
+The server is a process that we can spawn to serve requests on some parameterized port on our localhost. The server supports TCP-based connections and we use the `net::TcpListener` standard module as our networking interface. I'm pretty sure this is just a slim wrapper over `libc`.
 
-A quick primer on socket programming: it's an abstraction to facilitate communication between nodes on a computer network. Sockets are endpoints (represented as file descriptors on unix-like systems) which we can bind to specific addresses (host + port) to send and recieve data. 
+A quick primer on socket programming: it's an abstraction to facilitate communication between nodes on a computer network. Sockets are endpoints (represented as file descriptors on unix-like systems) which we can bind to specific addresses (host + port) to send and receive data. 
 
 When our server starts, it creates an initial TCP socket that's bound to some parameterized port on our localhost, and proceeds to listen on. This socket will be used to accept and process incoming requests from clients. 
 
@@ -91,7 +93,7 @@ pub enum Operation {
 
 ### Concurrent Programming Model 
 
-There's a couple approaches to handle concurrent IO. The most common approaches are using multi-process/multi-threading or using an event-based model. For IO heavy workloads, the latter usually wins out in terms of scalability. This is because the former requires processsing each incoming request in a separate thread (in the multi-threading approach). This can lead to both memory concerns (since each thread requires a separate stack) and performance constraints, due to costly context switches and shared resource contention, espcially if we need to scale to thousands of connections. We implement the latter. 
+There's a couple approaches to perform concurrent programming and/or parallel. The most common approaches are using multi-process/multi-threading or using an event-based model. For IO heavy workloads, the latter usually wins out in terms of scalability. This is because the former requires processing each incoming request in a separate thread (in the multi-threading approach). This can lead to both memory concerns (since each thread requires a separate stack) and performance constraints, due to costly context switches and shared resource contention, especially if we need to scale to thousands of connections. We implement the latter. 
 
 We maintain a list of current `Connection`s to the server:
 
@@ -111,7 +113,7 @@ pub struct Connection {
 
 This is how maintain the state of reach request. A `Connection` is initialized after each incoming TCP connection is `accept`ed. We maintain two buffers for incoming and outgoing data. `want_to_write` indicates we have data in our `write_buffer` we should send back the client. `want_close` indicates the client closed it's side of the connection and we should close our side.
 
-The server implements an event loop that continously `poll`s open connections and checks if they are ready to be read from or write to if applicable. `poll` is a syscall provided by the operating system.
+The server implements an event loop that continuously `poll`s open connections and checks if they are ready to be read from or write to if applicable. `poll` is a syscall provided by the operating system.
 
 ```
 while self.run.load(Ordering::SeqCst) {
@@ -161,7 +163,7 @@ while self.run.load(Ordering::SeqCst) {
 
 The `poll` syscall tells the OS to check for read and/or write readiness on each of our fds (`epoll` is actually probably more efficient but let's keep it simple for now). 
 
-Note that we have to wrap all foreign-function interface (FFI) calls in `unsafe` since the compile can't gaurantee memory safety across language boundaries. This doesn't mean the calls are incorrect but that it's up to the programmer to ensure safety. 
+Note that we have to wrap all foreign-function interface (FFI) calls in `unsafe` since the compile can't guarantee memory safety across language boundaries. This doesn't mean the calls are incorrect but that it's up to the programmer to ensure safety. 
 
 Check the `revent` of our listening socket first and see if we can `accept` and add a new `Connection`:
 
@@ -343,7 +345,7 @@ pub fn write(&mut self, message: &[u8]) -> Result<()> {
 }
 ```
 
-Now in the next iteration of the event loop, we'll `poll` the socket for write readiness (if our client is ready to recieve our reponse and the OS's per-socket write buffer isn't full)
+Now in the next iteration of the event loop, we'll `poll` the socket for write readiness (if our client is ready to receive our response and the OS's per-socket write buffer isn't full)
 
 ```
 ...
@@ -385,7 +387,7 @@ Attempt to flush as much data from the write buffer as we can. If our socket is 
 
 A small optimization we can make in our read-path is to potentially write a response(s) back to the client in the same loop iteration, saving us a syscall to check for write-readiness in the next iteration. 
 
-If our client is still sending pipelined requests or isn't ready to recieve reponses back for some other reason, we'll simple get a retryable error `WouldBlock` back from our OS in `handle_write`.
+If our client is still sending pipelined requests or isn't ready to receive responses back for some other reason, we'll simple get a retryable error `WouldBlock` back from our OS in `handle_write`.
 
 ```
 for fd in &fds[1..] {
@@ -398,7 +400,7 @@ for fd in &fds[1..] {
         }
         /*
             We can optimize here and handle_write before the next loop iteration to potentially avoid an
-            extra syscall before responding to the client. That is, if the client is ready to recieve a
+            extra syscall before responding to the client. That is, if the client is ready to receive a
             response and not still sending pipelined requests.
         */
         conn.handle_write()?;
@@ -409,7 +411,7 @@ for fd in &fds[1..] {
 
 ### Pipelined Requests
 
-Pipelined requests are requests that are sent by a client sequentially without waiting for responses from proceeding requests. I.e. a client may send multiple requests sequentially and some time later read their reponses, expecting the same ordering of responses that was used in the requests. Pipelining can reduce IO operations, which can improve overall throughput and reduces client-side latency, since multple requests can be processed in a single round trip to the server.    
+Pipelined requests are requests that are sent by a client sequentially without waiting for responses from proceeding requests. I.e. a client may send multiple requests sequentially and some time later read their responses, expecting the same ordering of responses that was used in the requests. Pipelining can reduce IO operations, which can improve overall throughput and reduces client-side latency, since multiple requests can be processed in a single round trip to the server.    
 
 Our implementation inherently supports pipelined requests. When a new connection is `accept`ed and ready to be read from, we attempt to process all potential requests before responding to the client. 
 
@@ -430,7 +432,7 @@ for fd in &fds[1..] {
 
 ### Benchmarks 
 
-Running on my M1 Macbook Pro with 10 cores, I top out around 35k OPs/S. Run with 30 threads submitting 50 requests each with a key length of 4 bytes:
+Running on my M1 MacBook Pro with 10 cores, I top out around 35k OPs/S. Run with 30 threads submitting 50 requests each with a key length of 4 bytes:
 
 ```
 cargo run --bin client --release -- --clients 30 --requests 50
@@ -447,8 +449,8 @@ Latency is in microseconds.
 
 A couple optimizations I can think of which aren't implemented yet:
 * We process requests on the same thread we use to accept new connections. We can decouple this and have one thread responsible for accepting new connections and a pool of worker threads for processing requests. Note this would require careful synchronization of our key-value store across threads 
-* We can add better buffer managment in our `Connection` struct. We currently `append` data back to the back and `remove` from the front. The former operation is pretty efficient with `Vec` since the structure reallocates exponentially to amortize allocation costs. The latter operation is not since we need to potentially "shift" all requests to the front when we remove one. We can probably think of a more clever data structure where both operations are efficient. 
-* Replace `poll` with `epoll` which is more efficient for monitoring large numbers of file descriptors since it is an event-driven model. I.e. with `poll`, we iterate and check all fds per call. With `epoll`, we can register fds we're inetrested in up-front and only be notified on specific `revent`s.  
+* We can add better buffer management in our `Connection` struct. We currently `append` data back to the back and `remove` from the front. The former operation is pretty efficient with `Vec` since the structure reallocates exponentially to amortize allocation costs. The latter operation is not since we need to potentially "shift" all requests to the front when we remove one. We can probably think of a more clever data structure where both operations are efficient. 
+* Replace `poll` with `epoll` which is more efficient for monitoring large numbers of file descriptors since it is an event-driven model. I.e. with `poll`, we iterate and check all fds per call. With `epoll`, we can register fds we're interested in up-front and only be notified on specific `revent`s.  
 
 Feel free to suggest more!
 
