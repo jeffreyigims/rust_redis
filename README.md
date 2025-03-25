@@ -43,6 +43,8 @@ The client can be used for testing `latency` (in microseconds) and `throughput` 
 
 The client spawns multiple threads to issue requests to the server, where each request is a sequence of `SET k v`, `GET k`, `DELETE k`, where `k` and `v` are randomly generated hex of size specified by `--key-length`. The number of clients and requests are also configurables by `--clients` and `--requests` respectively. 
 
+Remember to compile both the client and the server in release mode with the --release flag.
+
 ## Guide
 
 The goal of this guide is to explain and highlight some key design decisions. The following sections outline some key aspects of the server implementation.
@@ -111,7 +113,9 @@ pub struct Connection {
 }
 ```
 
-This is how maintain the state of reach request. A `Connection` is initialized after each incoming TCP connection is `accept`ed. We maintain two buffers for incoming and outgoing data. `want_to_write` indicates we have data in our `write_buffer` we should send back the client. `want_close` indicates the client closed it's side of the connection and we should close our side.
+This is how we maintain the state of reach request. A `Connection` is initialized after each incoming TCP connection is `accept`ed. We maintain two buffers for incoming and outgoing data. `want_to_write` indicates we have data in our `write_buffer` we should send back the client. `want_close` indicates the client closed it's side of the connection and we should close our side.
+
+Note: the original guide also has a `want_to_read` state and `poll`s for read-readiness only for new connections and when the `write_buffer` is empty. I opted to not include this and instead `poll` for read-readiness on every loop iteration. Consider the scenario when a client sends new requests while our server is sending response(s) to the same client. Our server would wait to handle the new requests until the proceeding loop iteration after flushing the it's responses. If we `poll` for read-readiness during each iteration, our server will handle new requests even while sending responses back.  
 
 The server implements an event loop that continuously `poll`s open connections and checks if they are ready to be read from or write to if applicable. `poll` is a syscall provided by the operating system.
 
@@ -443,7 +447,7 @@ Min: 213.00, Max: 3031.00, Average: 836.87, P50: 717.00, P95: 1334.15, P99: 2933
 OPs/S: 34474.83
 ```
 
-Latency is in microseconds.
+Latency is in microseconds (<span>&#181;</span>s).
 
 ### Future Optimizations and Next Steps 
 
