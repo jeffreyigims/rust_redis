@@ -1,22 +1,13 @@
 use anyhow::anyhow;
 use anyhow::Result;
-use libc::uint16_t;
 use std::io::prelude::*;
 use std::net::IpAddr;
 use std::net::{TcpStream, ToSocketAddrs};
-use std::str::Bytes;
 
 pub const HEADER_SIZE: usize = 4;
 
 #[derive(Debug)]
-
 pub enum Operation {
-    Get { key: String },
-    Delete { key: String },
-    Set { key: String, value: String },
-}
-
-pub enum OperationBytes {
     Get { key: Vec<u8> },
     Delete { key: Vec<u8> },
     Set { key: Vec<u8>, value: Vec<u8> },
@@ -24,13 +15,13 @@ pub enum OperationBytes {
 
 #[derive(Debug)]
 pub struct Connection {
-    pub stream: TcpStream, // jjigims23
+    pub stream: TcpStream,
 
     pub want_to_read: bool,
     pub want_to_write: bool,
     pub want_close: bool,
 
-    // TODO: implement efficient buffer management
+    // TODO: implement more efficient buffer management
     read_buffer: Vec<u8>,
     write_buffer: Vec<u8>,
 }
@@ -65,10 +56,8 @@ impl Connection {
     }
 
     pub fn read(&mut self) -> Result<()> {
-        // println!("Read...");
         let mut buf = [0; 32 * 1024];
         let result = self.stream.read(&mut buf);
-        // println!("Read {:?} bytes...", result);
         if let Err(ref e) = result {
             // retryable error
             if e.kind() == std::io::ErrorKind::WouldBlock {
@@ -96,23 +85,18 @@ impl Connection {
         }
 
         let message_len = u32::from_le_bytes(buf[..HEADER_SIZE].try_into()?);
-        // println!("Message length: {:?}", message_len);
 
         let total_len = HEADER_SIZE + message_len as usize;
         if buf.len() < total_len {
             return Ok(None);
         }
 
-        // println!("Total length: {:#?}", buf[HEADER_SIZE..total_len].to_vec());
-        let message =
-            // String::from_utf8(buf[HEADER_SIZE..total_len].to_vec()).map_err(anyhow::Error::from)?;
-            buf[HEADER_SIZE..total_len].to_vec();
+        let message = buf[HEADER_SIZE..total_len].to_vec();
 
-        // println!("Parsed message: {:?}", message);
         Ok(Some(message))
     }
 
-    pub fn handle_read(&mut self) -> Result<Option<OperationBytes>> {
+    pub fn handle_read(&mut self) -> Result<Option<Operation>> {
         if self.read_buffer.is_empty() {
             return Ok(None);
         }
@@ -125,14 +109,14 @@ impl Connection {
 
         let mut total_len = 1 + HEADER_SIZE + key.len();
         let oper = match op {
-            0x01 => OperationBytes::Get { key },
-            0x02 => OperationBytes::Delete { key },
+            0x01 => Operation::Get { key },
+            0x02 => Operation::Delete { key },
             0x03 => {
                 let Some(value) = self.try_parse(1 + HEADER_SIZE + key.len())? else {
                     return Ok(None);
                 };
                 total_len += HEADER_SIZE + value.len();
-                OperationBytes::Set { key, value }
+                Operation::Set { key, value }
             }
             _ => return Err(anyhow!("Invalid operation")),
         };
@@ -175,7 +159,6 @@ impl Connection {
         self.stream.read_exact(&mut response[bytes_read..])?;
 
         let len = u32::from_le_bytes(response);
-        // println!("Attempting to read {:?} bytes...", len);
 
         let mut buffer = vec![0; len as usize];
         self.stream.read_exact(&mut buffer[bytes_read..])?;

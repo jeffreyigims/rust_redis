@@ -12,10 +12,8 @@ use std::sync::{
     Arc,
 };
 
-mod connection;
-use connection::Connection;
-use connection::Operation;
-use connection::OperationBytes;
+use rust_redis::Connection;
+use rust_redis::Operation;
 
 pub struct Server {
     port: u16,
@@ -39,22 +37,20 @@ impl Server {
         })
     }
 
-    fn handle_request(&mut self, connection: &mut Connection, oper: OperationBytes) -> Result<()> {
-        // println!("Client said: {:#?}", oper);
-
+    fn handle_request(&mut self, connection: &mut Connection, oper: Operation) -> Result<()> {
         match oper {
-            OperationBytes::Get { key } => {
+            Operation::Get { key } => {
                 if let Some(value) = self.store.get(&key) {
                     connection.write(value)
                 } else {
                     connection.write(b"")
                 }
             }
-            OperationBytes::Delete { key } => {
+            Operation::Delete { key } => {
                 let v = self.store.remove(&key).unwrap_or("".into());
                 connection.write(&v)
             }
-            OperationBytes::Set { key, value } => {
+            Operation::Set { key, value } => {
                 let v = self.store.insert(key, value).unwrap_or("".into());
                 connection.write(&v)
             }
@@ -102,12 +98,12 @@ impl Server {
             // this should be the only non-blocking call
             let result = unsafe { poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) };
             if result == -1 {
-                // println!("poll call failed: {}", io::Error::last_os_error());
+                println!("poll call failed: {}", io::Error::last_os_error());
                 return Err(anyhow::Error::from(io::Error::last_os_error()));
             }
 
             if fds[0].revents & POLLIN != 0 {
-                // println!("TcpListener is ready to accept a connection.");
+                println!("TcpListener is ready to accept a connection.");
                 match listener.accept() {
                     Ok((socket, _addr)) => {
                         let fd = socket.as_raw_fd();
@@ -118,12 +114,11 @@ impl Server {
             }
 
             for fd in &fds[1..] {
-                // print!("File descriptor {} is ready: ", fd.fd);
                 if fd.revents & POLLERR != 0 || connections.get(&fd.fd).unwrap().want_close {
-                    // println!("Closing file descriptor: {}", fd.fd);
+                    println!("Closing file descriptor: {}", fd.fd);
                     // socket will be closed when it goes out of scope
                     let conn = connections.remove(&fd.fd).unwrap();
-                    // println!("Connection closed: {:#?}", conn);
+                    println!("Connection closed: {:#?}", conn);
                     continue;
                 }
                 if fd.revents & POLLIN != 0 {
@@ -133,9 +128,9 @@ impl Server {
                     while let Some(oper) = conn.handle_read()? {
                         self.handle_request(conn, oper)?;
                         /*
-                            We can potentially optimize here and handle_write to avoid an extra syscall before
-                            reposning to the client. If we're doing request-response, we can assume the client
-                            is ready for a response, but if we're not, we'd have to check the client is ready first
+                            We can optimize here and handle_write before the next loop iteration to potentially avoid an
+                            extra syscall before responding to the client. That is, if the client is ready to recieve a
+                            response and not still sending pipelined requests.
                         */
                         conn.handle_write()?;
                     }
@@ -194,7 +189,7 @@ mod integration_tests {
         // give the server some time to start
         thread::sleep(Duration::from_millis(100));
         let port = rx.recv().unwrap().parse().unwrap();
-        // println!("Server started on port {}", port);
+        println!("Server started on port {}", port);
         (sever_running, port)
     }
 

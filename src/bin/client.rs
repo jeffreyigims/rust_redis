@@ -1,21 +1,17 @@
 use anyhow::Result;
 use clap::Parser;
-use futures::stream::FuturesUnordered;
-use metrics_util::parse_quantiles;
 use rand::Rng;
+use rust_redis::Connection;
 use statrs::statistics::Data;
 use statrs::statistics::Distribution;
 use statrs::statistics::Max;
 use statrs::statistics::Min;
 use statrs::statistics::OrderStatistics;
-use statrs::statistics::Statistics;
 use std::{
     net::IpAddr,
     thread::{self, JoinHandle},
     time::Instant,
 };
-mod connection;
-use connection::Connection;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -106,18 +102,6 @@ fn main() -> Result<()> {
         "OPs/S: {:.2}",
         all_latencies.len() as f64 / total_elasped as f64 * 1_000_000.0
     );
-
-    // stream.set(b"hello", b"world")?;
-    // let response = stream.read_blocking()?;
-    // println!("Server said: {}", response);
-
-    // stream.get(b"hello")?;
-    // let response = stream.read_blocking()?;
-    // println!("Server said: {}", response);
-
-    // stream.delete(b"hello")?;
-    // let response = stream.read_blocking()?;
-    // println!("Server said: {}", response);
 
     Ok(())
 }
