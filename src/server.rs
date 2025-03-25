@@ -1,13 +1,16 @@
-use std::net::TcpListener;
 use anyhow::Result;
 use clap::Parser;
-use std::net::IpAddr;
-use std::os::fd::{AsRawFd, RawFd};
-use libc::{poll, pollfd, POLLIN, POLLERR, POLLOUT};
-use std::io;
+use libc::{poll, pollfd, POLLERR, POLLIN, POLLOUT};
 use std::collections::HashMap;
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::io;
+use std::net::IpAddr;
+use std::net::TcpListener;
+use std::os::fd::{AsRawFd, RawFd};
 use std::sync::mpsc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 mod connection;
 use connection::Connection;
@@ -29,13 +32,12 @@ fn start_server(port: Option<u16>, run: Arc<AtomicBool>, tx: mpsc::Sender<String
     // define the address and port the server will listen on
     let addr: (IpAddr, u16) = ([127, 0, 0, 1].into(), port.unwrap_or(0));
 
-    // create a socket, bind to localhost:PORT, and listen on it 
+    // create a socket, bind to localhost:PORT, and listen on it
     let listener = TcpListener::bind(&addr)?;
     let port = listener.local_addr()?.port();
     tx.send(port.to_string())?;
     listener.set_nonblocking(true)?;
     let fd: RawFd = listener.as_raw_fd();
-
 
     let mut connections: HashMap<RawFd, Connection> = HashMap::new();
     while run.load(Ordering::SeqCst) {
@@ -45,7 +47,7 @@ fn start_server(port: Option<u16>, run: Arc<AtomicBool>, tx: mpsc::Sender<String
             events: POLLIN,
             revents: 0,
         });
-        
+
         for (&fd, conn) in connections.iter() {
             fds.push(pollfd {
                 fd,
@@ -70,7 +72,7 @@ fn start_server(port: Option<u16>, run: Arc<AtomicBool>, tx: mpsc::Sender<String
             }
         }
 
-        // this should be the only non-blocking call 
+        // this should be the only non-blocking call
         let result = unsafe { poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) };
         if result == -1 {
             eprintln!("poll call failed: {}", io::Error::last_os_error());
@@ -83,7 +85,7 @@ fn start_server(port: Option<u16>, run: Arc<AtomicBool>, tx: mpsc::Sender<String
                 Ok((socket, _addr)) => {
                     let fd = socket.as_raw_fd();
                     connections.insert(fd, Connection::from_stream(socket));
-                },    
+                }
                 Err(e) => Err(anyhow::Error::from(e))?,
             }
         }
@@ -93,27 +95,24 @@ fn start_server(port: Option<u16>, run: Arc<AtomicBool>, tx: mpsc::Sender<String
                 println!("Error on file descriptor: {}", fd.fd);
                 // socket will be closed when it goes out of scope
                 connections.remove(&fd.fd);
-                
             }
             if fd.revents & POLLIN != 0 {
                 let conn = connections.get_mut(&fd.fd).unwrap();
-                match conn.handle_read()?
-                {
-                    Some(message) => {
-                        handle_request(conn, &message)?;
-                        /* 
-                          TODO: We can potentially optimize here and handle_write to avoid an extra syscall before
-                          reposning to the client. If we're doing request-response, we can assume the client 
-                          is ready for a response, but if we're not, we'd have to check the client is ready first
-                        */
-                    },
-                    None => {},
+                conn.read()?;
+                while let Some(message) = conn.handle_read()? {
+                    handle_request(conn, &message)?;
+                    /*
+                        We can potentially optimize here and handle_write to avoid an extra syscall before
+                        reposning to the client. If we're doing request-response, we can assume the client
+                        is ready for a response, but if we're not, we'd have to check the client is ready first
+                    */
+                    conn.handle_write()?;
                 }
             }
             if fd.revents & POLLOUT != 0 {
                 connections.get_mut(&fd.fd).unwrap().handle_write()?;
             }
-        }   
+        }
     }
 
     // we don't need to close the socket connection since it's tied to the lifetime of `socket`
@@ -129,20 +128,24 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
+    use connection::HEADER_SIZE;
+    use std::io::{Read, Write};
     use std::net::TcpStream;
     use std::thread;
-    use std::io::{Read, Write};
     use std::time::Duration;
 
     // helper function to start the server in a separate thread
-    fn start_test_server(sever_running: Arc<AtomicBool>, tx: mpsc::Sender<String>) -> thread::JoinHandle<()> {
+    fn start_test_server(
+        sever_running: Arc<AtomicBool>,
+        tx: mpsc::Sender<String>,
+    ) -> thread::JoinHandle<()> {
         thread::spawn(move || {
             start_server(None, sever_running, tx).unwrap();
         })
     }
 
     fn setup() -> (Arc<AtomicBool>, u16) {
-        let sever_running =  Arc::new(AtomicBool::new(true));
+        let sever_running = Arc::new(AtomicBool::new(true));
         let (tx, rx) = mpsc::channel();
         let _server_thread = start_test_server(Arc::clone(&sever_running), tx);
         // give the server some time to start
@@ -159,7 +162,7 @@ mod integration_tests {
     }
 
     #[test]
-    fn test_server_single_client() {
+    fn test_single_client() {
         let (server_running, port) = setup();
 
         let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port)).unwrap();
@@ -174,7 +177,7 @@ mod integration_tests {
     }
 
     #[test]
-    fn test_server_single_client_multi_write() {
+    fn test_single_client_multi_write() {
         let (server_running, port) = setup();
 
         let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port)).unwrap();
@@ -202,11 +205,11 @@ mod integration_tests {
     }
 
     #[test]
-    fn test_server_multiple_clients() {
+    fn test_multiple_clients() {
         let (server_running, port) = setup();
 
         let mut stream1 = TcpStream::connect(format!("127.0.0.1:{}", port)).unwrap();
-                let message = b"\x05\x00\x00\x00";
+        let message = b"\x05\x00\x00\x00";
         stream1.write_all(message).unwrap();
 
         let mut stream2 = TcpStream::connect(format!("127.0.0.1:{}", port)).unwrap();
@@ -223,6 +226,50 @@ mod integration_tests {
         let mut response = [0; 9];
         stream1.read_exact(&mut response).unwrap();
         assert_eq!(&response, b"\x05\x00\x00\x00hello");
+
+        teardown(server_running);
+    }
+
+    #[test]
+    fn test_pipelined_requests() {
+        let (server_running, port) = setup();
+        let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port)).unwrap();
+        stream.write_all(b"\x05\x00\x00\x00hello").unwrap();
+        stream.write_all(b"\x05\x00\x00\x00world").unwrap();
+        stream.write_all(b"\x01\x00\x00\x00!").unwrap();
+
+        let mut response = [0; 23];
+        stream.read_exact(&mut response).unwrap();
+        assert_eq!(
+            &response,
+            b"\x05\x00\x00\x00hello\x05\x00\x00\x00world\x01\x00\x00\x00!"
+        );
+
+        teardown(server_running);
+    }
+
+    #[test]
+    fn test_long_message() {
+        let (server_running, port) = setup();
+        let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port)).unwrap();
+
+        stream.write_all(b"\x05\x00\x00\x00hello").unwrap();
+
+        // sysctl net.inet.tcp.recvspace says 128KiB on my system, try 1MiB
+        // found this to actually be 32KiB in practice
+        const MIB: u32 = 1024 * 1024;
+        let buf = [1; MIB as usize];
+        stream.write_all(&MIB.to_le_bytes()).unwrap();
+        stream.write_all(&buf).unwrap();
+
+        let mut response = [0; 9];
+        stream.read_exact(&mut response).unwrap();
+        assert_eq!(&response, b"\x05\x00\x00\x00hello");
+
+        let mut response = [0; 4 + MIB as usize];
+        stream.read_exact(&mut response).unwrap();
+        assert_eq!(&response[..HEADER_SIZE], &MIB.to_le_bytes());
+        assert_eq!(&response[HEADER_SIZE..], &buf);
 
         teardown(server_running);
     }
