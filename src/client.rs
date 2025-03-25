@@ -1,8 +1,9 @@
 use anyhow::Result;
 use clap::Parser;
-use std::net::TcpStream;
-use std::io::prelude::*;
 use std::net::IpAddr;
+
+mod connection;
+use connection::Connection;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -17,14 +18,9 @@ fn main() -> Result<()> {
     // Define the address and port the server will listen on
     let addr: (IpAddr, u16) = ([127, 0, 0, 1].into(), args.port);
 
-    let mut stream = TcpStream::connect(addr)?;
-    stream.write_all(b"Hello")?;
-
-    let mut buffer = [0; 64];
-    let n = stream.read(&mut buffer)?;
-
-    let response = std::str::from_utf8(&buffer[..n])?;
-    println!("{}", response);
+    let mut stream: Connection = Connection::new(addr)?;
+    let response = stream.query("hello")?;
+    println!("Server said: {}", response);
 
     Ok(())
 }
